@@ -1,0 +1,8 @@
+streamlit
+pandas
+openpyxl
+thefuzz
+Levenshtein
+streamlit-mic-recorder
+yfinance
+plotly
