@@ -7,21 +7,29 @@ import re
 from thefuzz import process, fuzz
 from streamlit_mic_recorder import speech_to_text
 
-# 設定網頁標題
+# ==========================================
+# 網頁基本設定
+# ==========================================
 st.set_page_config(page_title="台股語音搜尋與股價分析系統", layout="wide")
 st.title("🎙️ 台股代號與名稱語音搜尋系統")
 
-# --- 🌟 核心優化：語音回呼函數 ---
-# 當語音辨識一有結果，立刻在底層更新 search_query，消除畫面延遲
-def update_search_from_voice():
-    if st.session_state.get('STT'):
-        st.session_state.search_query = st.session_state.STT
-
-# 初始化搜尋關鍵字狀態
+# ==========================================
+# 核心優化：語音回呼函數與狀態管理
+# ==========================================
+# 初始化搜尋關鍵字狀態 (記憶體)
 if "search_query" not in st.session_state:
     st.session_state.search_query = ""
 
-# --- 自訂同義詞與數字字典 ---
+# 當語音辨識完成時，強制將結果轉型為字串並寫入記憶體，避開 Streamlit 型別錯誤
+def update_search_from_voice():
+    stt_result = st.session_state.get('STT')
+    if stt_result:
+        st.session_state.search_query = str(stt_result)
+
+# ==========================================
+# 字典與關鍵字解析邏輯
+# ==========================================
+# 自訂同義詞與俗稱字典
 STOCK_ALIASES = {
     "台積電": "2330", "護國神山": "2330",
     "鴻海": "2317", "海公公": "2317",
@@ -30,23 +38,30 @@ STOCK_ALIASES = {
     "元大高股息": "0056", "航海王": "2603"
 }
 
+# 中文數字轉換字典
 CHINESE_NUMBERS = {
     "零":"0", "一":"1", "二":"2", "兩":"2", "三":"3", 
     "四":"4", "五":"5", "六":"6", "七":"7", "八":"8", "九":"9"
 }
 
 def smart_parse_query(query):
+    """
+    結合 Regex 與 thefuzz 模糊比對，將口語化的輸入轉化為精準的搜尋關鍵字
+    """
     if not query:
         return ""
 
+    # 1. 中文數字轉阿拉伯數字
     processed_text = query
     for ch, num in CHINESE_NUMBERS.items():
         processed_text = processed_text.replace(ch, num)
         
+    # 2. 擷取連續 4 到 5 碼的數字
     numbers = re.findall(r'\d{4,5}', processed_text)
     if numbers:
         return numbers[0]
 
+    # 3. 檢查自訂俗名字典 (模糊比對門檻設為 65 分)
     choices = list(STOCK_ALIASES.keys())
     best_match, score = process.extractOne(query, choices, scorer=fuzz.partial_ratio)
     
@@ -55,18 +70,21 @@ def smart_parse_query(query):
         
     return processed_text
 
-# 使用快取來讀取 Excel 檔案
+# ==========================================
+# 資料載入區塊 (快取加速)
+# ==========================================
 @st.cache_data
 def load_data():
     file_path = "台灣上市上櫃股票清單.xlsx"
     try:
         df = pd.read_excel(file_path, sheet_name=0)
-        df.columns = df.columns.str.strip()
+        df.columns = df.columns.str.strip() # 清除欄位名稱可能的空白
         
         if '公司代號' not in df.columns or '公司名稱' not in df.columns:
             st.error("⚠️ 檔案中找不到「公司代號」或「公司名稱」欄位，請檢查 Excel 欄位名稱！")
             st.stop()
             
+        # 建立搜尋用合併字串
         df['Search_Key'] = df['公司代號'].astype(str) + " - " + df['公司名稱'].astype(str)
         return df
     except FileNotFoundError:
@@ -76,7 +94,6 @@ def load_data():
         st.error(f"⚠️ 讀取檔案時發生錯誤：{e}")
         st.stop()
 
-# 1. 載入資料
 with st.spinner('正在載入股票清單...'):
     df = load_data()
     all_choices = df['Search_Key'].tolist()
@@ -84,14 +101,16 @@ with st.spinner('正在載入股票清單...'):
 st.success(f"✅ 成功載入 {len(df)} 檔股票資料！")
 st.markdown("---")
 
-# 2. 語音與文字輸入區塊
+# ==========================================
+# UI：語音與文字輸入區塊
+# ==========================================
 st.markdown("### 🔍 快速搜尋")
 
 col1, col2 = st.columns([1.5, 4.5])
 
 with col1:
     st.write(" ") 
-    # 加入 callback=update_search_from_voice，確保語音一結束立刻強制同步
+    # 語音按鈕：加入 Callback，說完停頓即可瞬間觸發更新
     speech_to_text(
         language='zh-TW',
         start_prompt="🎤 點擊說話",
@@ -103,18 +122,24 @@ with col1:
     )
 
 with col2:
-    # 🌟 核心優化：直接將 text_input 的 key 綁定為 "search_query"
-    # 這樣不管是用講的還是用打字的，都會完美且瞬間連動，不用再寫複雜的 if 判斷
-    st.text_input(
+    # 文字輸入：解除 key 綁定，改用 value 單向接收，避免元件型別衝突
+    search_term = st.text_input(
         "點擊左方按鈕語音輸入，或在此手動輸入 (支援俗稱如：護國神山、海公公)：", 
-        key="search_query",
+        value=st.session_state.search_query,
         placeholder="例如：台積電、二三三零、發哥..."
     )
+    
+    # 若手動更改輸入框內容，同步寫回系統記憶體
+    if search_term != st.session_state.search_query:
+        st.session_state.search_query = search_term
 
-# 3. 進行相似度比對與結果顯示
+# ==========================================
+# 搜尋比對與結果分析區塊
+# ==========================================
 if st.session_state.search_query:
     st.markdown("---")
     
+    # 透過智慧解析器萃取關鍵字
     optimized_query = smart_parse_query(st.session_state.search_query)
     
     if optimized_query != st.session_state.search_query:
@@ -122,12 +147,15 @@ if st.session_state.search_query:
     
     # 極速分流搜尋邏輯
     if optimized_query.isdigit():
+        # 純數字直接用 Pandas 篩選，速度極快
         matched_df = df[df['公司代號'].astype(str).str.contains(optimized_query)]
         matched_options = matched_df['Search_Key'].head(10).tolist()
     else:
+        # 文字使用 thefuzz 進行比對
         results = process.extract(optimized_query, all_choices, limit=10, scorer=fuzz.partial_ratio)
-        matched_options = [res[0] for res in results if res[1] >= 30]
+        matched_options = [res[0] for res in results if res[1] >= 30] # 過濾離譜選項
     
+    # === 顯示結果與股價圖表 ===
     if matched_options:
         st.markdown("### 🎯 為您找到以下項目 (點選查看半年股價分析)")
         selected_option = st.radio("選擇股票：", matched_options, label_visibility="collapsed")
@@ -142,12 +170,13 @@ if st.session_state.search_query:
                 f"**市場別：** {selected_row.get('市場別', '無資料')}"
             )
             
-            # --- 股價抓取與統計分析區塊 ---
+            # --- 股價抓取與統計分析 ---
             st.markdown("### 📊 近半年股價統計分析")
             
             market_type = str(selected_row.get('市場別', ''))
             stock_id = str(selected_row['公司代號'])
             
+            # 判斷 Yahoo Finance Ticker 尾綴
             if '上市' in market_type:
                 yf_ticker = f"{stock_id}.TW"
             elif '上櫃' in market_type:
@@ -163,22 +192,25 @@ if st.session_state.search_query:
                 else:
                     close_prices = stock_data['Close']
                     
+                    # 計算統計數據
                     latest_price = close_prices.iloc[-1]
                     max_price = close_prices.max()
                     min_price = close_prices.min()
                     mean_price = close_prices.mean()
                     median_price = close_prices.median()
                     
+                    # 計算年化波動度
                     daily_returns = close_prices.pct_change().dropna()
                     volatility = daily_returns.std() * np.sqrt(252) * 100 
                     
+                    # 顯示統計指標
                     m1, m2, m3, m4 = st.columns(4)
                     m1.metric("最新收盤價", f"{latest_price:.2f}")
                     m2.metric("近半年 最高/最低", f"{max_price:.2f} / {min_price:.2f}")
                     m3.metric("近半年 平均/中位", f"{mean_price:.2f} / {median_price:.2f}")
                     m4.metric("年化波動度", f"{volatility:.2f}%")
                     
-                    # 繪製直方圖
+                    # 繪製 Plotly 直方圖
                     fig = px.histogram(
                         stock_data, 
                         x="Close", 
@@ -188,6 +220,7 @@ if st.session_state.search_query:
                         color_discrete_sequence=['#636EFA']
                     )
                     
+                    # 標註參考線
                     fig.add_vline(x=latest_price, line_dash="solid", line_color="red", 
                                   annotation_text=f"最新價 {latest_price:.2f}", annotation_position="top right")
                     fig.add_vline(x=mean_price, line_dash="dash", line_color="green", 
