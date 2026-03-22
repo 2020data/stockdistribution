@@ -97,16 +97,15 @@ st.markdown("---")
 
 # 調整左右比例，讓兩邊的輸入區塊都很寬敞
 col1, col2 = st.columns([1, 3])
-
 with col1:
     # 利用 Markdown 做出大標題與圖示感
     st.markdown("### 🎙️ 語音輸入")
     
-    # 取得語音辨識的純文字結果 (不再綁定 callback 避免亂碼)
+    # 將提示文字改為「對講機」模式的明確引導
     voice_text = speech_to_text(
         language='zh-TW',
-        start_prompt="點擊開始說話",
-        stop_prompt="🔴 說完停頓1秒自動帶入",
+        start_prompt="👉 點擊開始錄音",
+        stop_prompt="🔴 講完請點此送出",  # 直接告訴使用者必須點擊
         use_container_width=True, 
         just_once=True, 
         key='STT_Component'
