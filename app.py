@@ -11,13 +11,13 @@ from streamlit_mic_recorder import speech_to_text
 st.set_page_config(page_title="台股語音搜尋與股價分析系統", layout="wide")
 st.title("🎙️ 台股代號與名稱語音搜尋系統")
 
-# --- 新增：自訂同義詞與數字字典 ---
+# --- 自訂同義詞與數字字典 ---
 STOCK_ALIASES = {
     "台積電": "2330", "護國神山": "2330",
     "鴻海": "2317", "海公公": "2317",
     "聯發科": "2454", "發哥": "2454",
     "台灣50": "0050", "國泰永續高股息": "00878",
-    "元大高股息": "0056", "航海王": "2603" # 可以隨時擴充
+    "元大高股息": "0056", "航海王": "2603"
 }
 
 CHINESE_NUMBERS = {
@@ -32,25 +32,20 @@ def smart_parse_query(query):
     if not query:
         return ""
 
-    # 1. 中文數字轉阿拉伯數字 (例如: "二三三零" -> "2330")
     processed_text = query
     for ch, num in CHINESE_NUMBERS.items():
         processed_text = processed_text.replace(ch, num)
         
-    # 2. Regex 擷取代碼 (抓取連續 4 到 5 碼的數字)
     numbers = re.findall(r'\d{4,5}', processed_text)
     if numbers:
-        return numbers[0] # 如果有講出代號，直接回傳代號作為關鍵字
+        return numbers[0]
 
-    # 3. 檢查自訂俗名/別名 (thefuzz 模糊比對)
     choices = list(STOCK_ALIASES.keys())
     best_match, score = process.extractOne(query, choices, scorer=fuzz.partial_ratio)
     
-    # 若最高分超過 65 分，判定為配對成功，回傳對應的真實代號
     if score >= 65:
         return STOCK_ALIASES[best_match]
         
-    # 4. 如果都沒有數字也沒有中別名，回傳轉換過的字串，交由原本的清單去比對公司名稱
     return processed_text
 
 # --- 初始化 session_state 來記憶搜尋關鍵字 ---
@@ -112,15 +107,23 @@ with col2:
 if st.session_state.search_query:
     st.markdown("---")
     
-    # 🌟 核心升級：先透過我們寫的智慧解析器萃取精準關鍵字
     optimized_query = smart_parse_query(st.session_state.search_query)
     
     if optimized_query != st.session_state.search_query:
         st.caption(f"💡 系統已自動將您的輸入解析為關鍵字：**{optimized_query}**")
     
-    # 使用優化後的關鍵字對全台股清單進行比對
-    results = process.extract(optimized_query, all_choices, limit=5)
-    matched_options = [res[0] for res in results]
+    # 🚀 核心升級：極速分流搜尋邏輯
+    if optimized_query.isdigit():
+        # [極速路徑] 若解析結果為純數字，直接使用 Pandas 的 str.contains 篩選代號
+        # 避開複雜的字串距離計算，瞬間抓出前 10 筆符合的結果
+        matched_df = df[df['公司代號'].astype(str).str.contains(optimized_query)]
+        matched_options = matched_df['Search_Key'].head(10).tolist()
+    else:
+        # [常規路徑] 若為文字名稱，使用 thefuzz 進行比對，指定 limit=10 
+        # 並使用較快的 scorer (fuzz.partial_ratio) 加速長字串的局部匹配
+        results = process.extract(optimized_query, all_choices, limit=10, scorer=fuzz.partial_ratio)
+        # 過濾掉分數太低的離譜選項 (假設相似度低於 30 分就不要顯示)
+        matched_options = [res[0] for res in results if res[1] >= 30]
     
     if matched_options:
         st.markdown("### 🎯 為您找到以下項目 (點選查看半年股價分析)")
@@ -191,4 +194,4 @@ if st.session_state.search_query:
                     
                     st.plotly_chart(fig, use_container_width=True)
     else:
-        st.warning("找不到相似的結果，請嘗試其他關鍵字。")
+        st.warning("找不到符合的結果，請嘗試其他關鍵字。")
