@@ -8,10 +8,21 @@ from thefuzz import process, fuzz
 from streamlit_mic_recorder import speech_to_text
 
 # ==========================================
-# 網頁基本設定
+# 網頁基本設定 & 自訂 CSS 放大字體
 # ==========================================
 st.set_page_config(page_title="台股語音搜尋與股價分析系統", layout="wide")
-st.title("🎙️ 台股代號與名稱語音搜尋系統")
+
+# 透過 CSS 將輸入框的字體放大，讓介面更大氣直覺
+st.markdown("""
+    <style>
+    div[data-testid="stTextInput"] input {
+        font-size: 20px !important;
+        padding: 15px !important;
+    }
+    </style>
+""", unsafe_allow_html=True)
+
+st.title("🎙️ 台股代號與名稱智慧搜尋系統")
 
 # ==========================================
 # 狀態管理 (記憶體)
@@ -22,7 +33,6 @@ if "search_query" not in st.session_state:
 # ==========================================
 # 字典與關鍵字解析邏輯
 # ==========================================
-# 自訂同義詞與俗稱字典
 STOCK_ALIASES = {
     "台積電": "2330", "護國神山": "2330",
     "鴻海": "2317", "海公公": "2317",
@@ -31,30 +41,23 @@ STOCK_ALIASES = {
     "元大高股息": "0056", "航海王": "2603"
 }
 
-# 中文數字轉換字典
 CHINESE_NUMBERS = {
     "零":"0", "一":"1", "二":"2", "兩":"2", "三":"3", 
     "四":"4", "五":"5", "六":"6", "七":"7", "八":"8", "九":"9"
 }
 
 def smart_parse_query(query):
-    """
-    結合 Regex 與 thefuzz 模糊比對，將口語化的輸入轉化為精準的搜尋關鍵字
-    """
     if not query:
         return ""
 
-    # 1. 中文數字轉阿拉伯數字
     processed_text = query
     for ch, num in CHINESE_NUMBERS.items():
         processed_text = processed_text.replace(ch, num)
         
-    # 2. 擷取連續 4 到 5 碼的數字
     numbers = re.findall(r'\d{4,5}', processed_text)
     if numbers:
         return numbers[0]
 
-    # 3. 檢查自訂俗名字典 (模糊比對門檻設為 65 分)
     choices = list(STOCK_ALIASES.keys())
     best_match, score = process.extractOne(query, choices, scorer=fuzz.partial_ratio)
     
@@ -74,14 +77,11 @@ def load_data():
         df.columns = df.columns.str.strip() 
         
         if '公司代號' not in df.columns or '公司名稱' not in df.columns:
-            st.error("⚠️ 檔案中找不到「公司代號」或「公司名稱」欄位，請檢查 Excel 欄位名稱！")
+            st.error("⚠️ 檔案中找不到「公司代號」或「公司名稱」欄位，請檢查檔案！")
             st.stop()
             
         df['Search_Key'] = df['公司代號'].astype(str) + " - " + df['公司名稱'].astype(str)
         return df
-    except FileNotFoundError:
-        st.error(f"⚠️ 找不到檔案：{file_path}。請確認檔案是否與程式放在同一個資料夾中。")
-        st.stop()
     except Exception as e:
         st.error(f"⚠️ 讀取檔案時發生錯誤：{e}")
         st.stop()
@@ -90,42 +90,46 @@ with st.spinner('正在載入股票清單...'):
     df = load_data()
     all_choices = df['Search_Key'].tolist()
 
-st.success(f"✅ 成功載入 {len(df)} 檔股票資料！")
+# ==========================================
+# UI：大圖示語音與文字輸入區塊 (極速同步版)
+# ==========================================
 st.markdown("---")
 
-# ==========================================
-# UI：語音與文字輸入區塊 (🌟 極速同步版)
-# ==========================================
-st.markdown("### 🔍 快速搜尋")
-
-col1, col2 = st.columns([1.5, 4.5])
+# 調整左右比例，讓兩邊的輸入區塊都很寬敞
+col1, col2 = st.columns([1, 3])
 
 with col1:
-    st.write(" ") 
-    # 取得語音辨識的純文字結果
+    # 利用 Markdown 做出大標題與圖示感
+    st.markdown("### 🎙️ 語音輸入")
+    
+    # 取得語音辨識的純文字結果 (不再綁定 callback 避免亂碼)
     voice_text = speech_to_text(
         language='zh-TW',
-        start_prompt="🎤 點擊說話",
-        stop_prompt="🔴 說完停頓即可",
+        start_prompt="點擊開始說話",
+        stop_prompt="🔴 說完停頓1秒自動帶入",
         use_container_width=True, 
         just_once=True, 
-        key='STT'
+        key='STT_Component'
     )
 
 with col2:
-    # 💡 核心防呆與同步機制：只要收到語音，立刻寫入記憶體並「強制刷新畫面」
+    st.markdown("### ⌨️ 文字搜尋")
+    
+    # === 核心同步機制 ===
+    # 只要語音套件回傳了文字，且跟目前記憶體不同，立刻寫入並強制刷新畫面
     if voice_text and voice_text != st.session_state.search_query:
         st.session_state.search_query = voice_text
-        st.rerun() # 瞬間重新整理，消除 1 幀的延遲感
+        st.rerun()
 
-    # 輸入框單向接收 state 的值，不綁定 key 就不會報錯
+    # 輸入框單向接收 state 的值
     search_term = st.text_input(
-        "點擊左方按鈕語音輸入，或在此手動輸入 (支援俗稱如：護國神山、海公公)：", 
+        "輸入標題", # 標題會被隱藏
         value=st.session_state.search_query,
-        placeholder="例如：台積電、二三三零、發哥..."
+        placeholder="例如：台積電、二三三零、發哥...",
+        label_visibility="collapsed" # 隱藏標籤，讓畫面更簡潔大方
     )
     
-    # 若使用者用「鍵盤手動更改」文字，也同步更新並強制刷新
+    # 手動更改文字時，同步更新並強制刷新
     if search_term != st.session_state.search_query:
         st.session_state.search_query = search_term
         st.rerun()
@@ -136,13 +140,11 @@ with col2:
 if st.session_state.search_query:
     st.markdown("---")
     
-    # 透過智慧解析器萃取關鍵字
     optimized_query = smart_parse_query(st.session_state.search_query)
     
     if optimized_query != st.session_state.search_query:
-        st.caption(f"💡 系統已自動將您的輸入解析為關鍵字：**{optimized_query}**")
+        st.success(f"💡 系統已自動將您的輸入解析為關鍵字：**{optimized_query}**")
     
-    # 極速分流搜尋邏輯
     if optimized_query.isdigit():
         matched_df = df[df['公司代號'].astype(str).str.contains(optimized_query)]
         matched_options = matched_df['Search_Key'].head(10).tolist()
@@ -150,9 +152,8 @@ if st.session_state.search_query:
         results = process.extract(optimized_query, all_choices, limit=10, scorer=fuzz.partial_ratio)
         matched_options = [res[0] for res in results if res[1] >= 30] 
     
-    # === 顯示結果與股價圖表 ===
     if matched_options:
-        st.markdown("### 🎯 為您找到以下項目 (點選查看半年股價分析)")
+        st.markdown("### 🎯 為您找到以下項目 (點選查看分析)")
         selected_option = st.radio("選擇股票：", matched_options, label_visibility="collapsed")
         
         if selected_option:
@@ -165,7 +166,6 @@ if st.session_state.search_query:
                 f"**市場別：** {selected_row.get('市場別', '無資料')}"
             )
             
-            # --- 股價抓取與統計分析 ---
             st.markdown("### 📊 近半年股價統計分析")
             
             market_type = str(selected_row.get('市場別', ''))
