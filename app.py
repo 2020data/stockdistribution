@@ -11,6 +11,16 @@ from streamlit_mic_recorder import speech_to_text
 st.set_page_config(page_title="台股語音搜尋與股價分析系統", layout="wide")
 st.title("🎙️ 台股代號與名稱語音搜尋系統")
 
+# --- 🌟 核心優化：語音回呼函數 ---
+# 當語音辨識一有結果，立刻在底層更新 search_query，消除畫面延遲
+def update_search_from_voice():
+    if st.session_state.get('STT'):
+        st.session_state.search_query = st.session_state.STT
+
+# 初始化搜尋關鍵字狀態
+if "search_query" not in st.session_state:
+    st.session_state.search_query = ""
+
 # --- 自訂同義詞與數字字典 ---
 STOCK_ALIASES = {
     "台積電": "2330", "護國神山": "2330",
@@ -26,9 +36,6 @@ CHINESE_NUMBERS = {
 }
 
 def smart_parse_query(query):
-    """
-    結合 Regex 與 thefuzz 模糊比對，將口語化的輸入轉化為精準的搜尋關鍵字
-    """
     if not query:
         return ""
 
@@ -47,10 +54,6 @@ def smart_parse_query(query):
         return STOCK_ALIASES[best_match]
         
     return processed_text
-
-# --- 初始化 session_state 來記憶搜尋關鍵字 ---
-if "search_query" not in st.session_state:
-    st.session_state.search_query = ""
 
 # 使用快取來讀取 Excel 檔案
 @st.cache_data
@@ -84,33 +87,29 @@ st.markdown("---")
 # 2. 語音與文字輸入區塊
 st.markdown("### 🔍 快速搜尋")
 
-# 稍微調寬左邊的比例，讓完整的按鈕文字能顯示清楚
 col1, col2 = st.columns([1.5, 4.5])
 
 with col1:
     st.write(" ") 
-    # 🌟 核心 UX 優化：加入 start_prompt 與 stop_prompt 引導使用者
-    voice_text = speech_to_text(
+    # 加入 callback=update_search_from_voice，確保語音一結束立刻強制同步
+    speech_to_text(
         language='zh-TW',
-        start_prompt="🎤 點擊說話 (說完自動搜尋)",
-        stop_prompt="🔴 正在聆聽... (說完停頓即可)",
+        start_prompt="🎤 點擊說話",
+        stop_prompt="🔴 說完停頓即可",
         use_container_width=True, 
         just_once=True, 
-        key='STT'
+        key='STT',
+        callback=update_search_from_voice
     )
 
 with col2:
-    if voice_text:
-        st.session_state.search_query = voice_text
-        
-    search_term = st.text_input(
+    # 🌟 核心優化：直接將 text_input 的 key 綁定為 "search_query"
+    # 這樣不管是用講的還是用打字的，都會完美且瞬間連動，不用再寫複雜的 if 判斷
+    st.text_input(
         "點擊左方按鈕語音輸入，或在此手動輸入 (支援俗稱如：護國神山、海公公)：", 
-        value=st.session_state.search_query,
+        key="search_query",
         placeholder="例如：台積電、二三三零、發哥..."
     )
-    
-    if search_term != st.session_state.search_query:
-        st.session_state.search_query = search_term
 
 # 3. 進行相似度比對與結果顯示
 if st.session_state.search_query:
