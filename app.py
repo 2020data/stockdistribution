@@ -84,18 +84,27 @@ st.markdown("---")
 # 2. 語音與文字輸入區塊
 st.markdown("### 🔍 快速搜尋")
 
-col1, col2 = st.columns([1, 5])
+# 稍微調寬左邊的比例，讓完整的按鈕文字能顯示清楚
+col1, col2 = st.columns([1.5, 4.5])
 
 with col1:
     st.write(" ") 
-    voice_text = speech_to_text(language='zh-TW', use_container_width=True, just_once=True, key='STT')
+    # 🌟 核心 UX 優化：加入 start_prompt 與 stop_prompt 引導使用者
+    voice_text = speech_to_text(
+        language='zh-TW',
+        start_prompt="🎤 點擊說話 (說完自動搜尋)",
+        stop_prompt="🔴 正在聆聽... (說完停頓即可)",
+        use_container_width=True, 
+        just_once=True, 
+        key='STT'
+    )
 
 with col2:
     if voice_text:
         st.session_state.search_query = voice_text
         
     search_term = st.text_input(
-        "點擊左方麥克風說話，或在此手動輸入 (支援俗稱如：護國神山、海公公)：", 
+        "點擊左方按鈕語音輸入，或在此手動輸入 (支援俗稱如：護國神山、海公公)：", 
         value=st.session_state.search_query,
         placeholder="例如：台積電、二三三零、發哥..."
     )
@@ -112,17 +121,12 @@ if st.session_state.search_query:
     if optimized_query != st.session_state.search_query:
         st.caption(f"💡 系統已自動將您的輸入解析為關鍵字：**{optimized_query}**")
     
-    # 🚀 核心升級：極速分流搜尋邏輯
+    # 極速分流搜尋邏輯
     if optimized_query.isdigit():
-        # [極速路徑] 若解析結果為純數字，直接使用 Pandas 的 str.contains 篩選代號
-        # 避開複雜的字串距離計算，瞬間抓出前 10 筆符合的結果
         matched_df = df[df['公司代號'].astype(str).str.contains(optimized_query)]
         matched_options = matched_df['Search_Key'].head(10).tolist()
     else:
-        # [常規路徑] 若為文字名稱，使用 thefuzz 進行比對，指定 limit=10 
-        # 並使用較快的 scorer (fuzz.partial_ratio) 加速長字串的局部匹配
         results = process.extract(optimized_query, all_choices, limit=10, scorer=fuzz.partial_ratio)
-        # 過濾掉分數太低的離譜選項 (假設相似度低於 30 分就不要顯示)
         matched_options = [res[0] for res in results if res[1] >= 30]
     
     if matched_options:
